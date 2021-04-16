@@ -3,6 +3,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import pandas as pd 
 from scipy.stats import wasserstein_distance as wasser_dist
+from scipy.stats import norm
 from itertools import combinations, product
 import numpy as np
 from statsmodels.distributions.empirical_distribution import ECDF   
@@ -146,9 +147,6 @@ def fill_missing_comb(value_counts_df):
     value_counts_df['count'] = value_counts_df['count'].astype(int)
     return value_counts_df
 
-def trim_categories(value_counts_df, min_weight_thresh):
-    pass
-
 def sort_categories(value_counts_df, by='mean_weight'):
     if by=="mean_weight":
         categs = (
@@ -246,11 +244,24 @@ def plot_discrete_histogram(
     )
     fig.show()
 
-def compare_numerical_features(data, features, nbins, groupby=None, plot_cdf=True):
-    groupby_data = data.groupby(groupby)
+def compare_numerical_features(
+    data, 
+    features, 
+    nbins, 
+    groupby=None, 
+    plot_cdf=True, 
+    queries_dict=None,
+    sample_pct=1,
+):
+
+    if groupby is not None:
+        groupby_data = {name: df.sample(frac=sample_pct) for name, df in data.groupby(groupby)}
+    elif queries_dict is not None:
+        groupby_data = {name: data.query(query).sample(frac=sample_pct) for name, query in queries_dict.items()}
+
     dist_list = []
     for feature in features:
-        data_dict = {name: data.values for name, data in groupby_data[feature]}
+        data_dict = {name: data[feature].values for name, data in groupby_data.items()}
         dist  = calc_wasserstein(data_dict, normalize=True, q_tuple=(0.01, .99))
         dist['feature'] = feature
         dist_list.append(dist)
@@ -265,7 +276,7 @@ def compare_numerical_features(data, features, nbins, groupby=None, plot_cdf=Tru
     )
 
     for feature, dist in dists.iteritems():
-        data_dict = {name: data.values for name, data in groupby_data[feature]}
+        data_dict = {name: data[feature].values for name, data in groupby_data.items()}
         fig = plot_histograms(
             data_dict, 
             title=feature+f", distance = {round(dist, 4)} ", 
@@ -279,11 +290,31 @@ def compare_numerical_features(data, features, nbins, groupby=None, plot_cdf=Tru
         )
     return dists.to_frame()
 
-def compare_categorical_features(data, features, groupby=None):
-    groupby_data = data.groupby(groupby)
+def compare_categorical_features(
+    data, 
+    features, 
+    groupby=None, 
+    queries_dict=None, 
+    sample_pct=1,
+    max_n_categories=100,
+    categories_recall_pct=1,
+    keep_nan=True,
+):
+    if groupby is not None:
+        groupby_data = {name: df.sample(frac=sample_pct) for name, df in data.groupby(groupby)}
+    elif queries_dict is not None:
+        groupby_data = {name: data.query(query).sample(frac=sample_pct) for name, query in queries_dict.items()}
+
     dist_list = []
+    category_trim_mapping = {}
     for feature in features:
-        data_dict = {name: data.values for name, data in groupby_data[feature]}
+
+        cat_map = get_category_mapping(
+            pd.concat([data[[feature]] for data in groupby_data.values()])[feature], 
+            max_n_categories, categories_recall_pct, keep_nan
+        )
+        category_trim_mapping[feature] = cat_map
+        data_dict = {name: data[feature].values for name, data in groupby_data.items()}
         dist  = calc_total_variation(data_dict, normalize=False)
         dist['feature'] = feature
         dist_list.append(dist)
@@ -298,7 +329,10 @@ def compare_categorical_features(data, features, groupby=None):
     )
 
     for feature, dist in dists.iteritems():
-        data_dict = {name: data.values for name, data in groupby_data[feature]}
+        data_dict = {
+            name: data[feature].replace(category_trim_mapping[feature])
+            for name, data in groupby_data.items()
+        }
         fig = plot_discrete_histogram(
             data_dict, 
             title=feature+f", distance = {round(dist, 4)} ", 
@@ -314,6 +348,8 @@ def marginal_dependency_plot(
     target, 
     feature_col, 
     categorical_feature=False, 
+    categorical_target_class=None,
+    categorical_target_alpha=0.1,
     bins=20, 
     sample_pct=1, 
     lower_q=.1,
@@ -321,6 +357,9 @@ def marginal_dependency_plot(
     max_n_categories=100,
     categories_recall_pct=1,
     keep_nan=True,
+    xaxis_title=None,
+    yaxis_title=None,
+    **kwargs
 ):
     nan_target_constrain = ~data[target].isna()
     
@@ -337,39 +376,84 @@ def marginal_dependency_plot(
             max_n_categories,
             categories_recall_pct,
             keep_nan)
-    group_statistics = get_group_statistics(sample_data, feature_col, target, lower_q, upper_q)
-    if categorical_feature is True:
-        group_statistics = group_statistics.sort_values(by='quantile_0.5')
 
+    if categorical_target_class is None:
+        group_statistics = get_group_statistics(sample_data, feature_col, target, lower_q, upper_q)
+        if categorical_feature is True:
+            group_statistics = group_statistics.sort_values(by='quantile_0.5')
+        lower_col = f'quantile_{lower_q}'
+        upper_col = f'quantile_{upper_q}'
+        middle_col = 'quantile_0.5'
+        secondary_middle_col = 'mean'
+        lower_name = f"Quantile {100*lower_q}%"
+        upper_name = f"Quantile {100*upper_q}%"
+    else:
+        group_statistics = get_target_proportion(
+            sample_data, feature_col, 
+            target, categorical_target_alpha, categorical_target_class
+        )
+        if categorical_feature is True:
+            group_statistics = group_statistics.sort_values(by='proportion')
+        lower_col = 'lower'
+        upper_col = 'upper'
+        middle_col = 'proportion'
+        yaxis_title = f'Proportion of {target} = {categorical_target_class}'
+        lower_name = f"Lower confidence alpha = {categorical_target_alpha}"
+        upper_name = f"Upper confidence alpha = {categorical_target_alpha}"
+        secondary_middle_col = None
+    
+    if categorical_feature is False:
+        group_statistics.index = group_statistics.index.astype(str)
+        
+    if xaxis_title is None:
+        xaxis_title = feature_col
+    if yaxis_title is None:
+        yaxis_title = target
     if categorical_feature:
-        plot_confidence_bars()
-        return group_statistics
+        fig = plot_confidence_bars(
+            group_statistics,
+            lower_col=lower_col, 
+            upper_col=upper_col, 
+            confidence_bar_col=middle_col,
+            secondary_bar_col=secondary_middle_col,
+            xaxis_title=xaxis_title,
+            yaxis_title=yaxis_title,
+            **kwargs
+        )
     else:
         fig = plot_confidence_lines(
             group_statistics,
-            lower_col=f'quantile_{lower_q}', 
-            upper_col=f'quantile_{upper_q}', 
-            mean_col='quantile_0.5',
-            lower_name=f"Quantile {100*lower_q}%",
-            upper_name=f"Quantile {100*upper_q}%",
+            lower_col=lower_col, 
+            upper_col=upper_col, 
+            mean_col=middle_col,
+            dashed_col=secondary_middle_col,
+            lower_name=lower_name,
+            upper_name=upper_name,
+            xaxis_title=xaxis_title,
+            yaxis_title=yaxis_title,
+            **kwargs
         )
-    fig.show()
+    return fig
 
 def categorify_feature(feature_series, bins):
     feature_values = feature_series.to_frame('feature')
     feature_values['feature_bin'] = pd.cut(feature_values['feature'], bins=bins)
-    return feature_values['feature_bin'].astype(str).values
+    return feature_values['feature_bin'].values
 
-def trim_categories(categories_series, max_n_categories, categories_recall_pct, keep_nan):
+def get_category_mapping(categories_series, max_n_categories, categories_recall_pct, keep_nan):
+    eps = 1e-6
     categories_pct = (
         categories_series
         .value_counts(normalize=True, dropna=False)
         .sort_values(ascending=False)
         .cumsum()
     )
-    recall_categories = categories_pct[categories_pct <= categories_recall_pct].index
+
+    n_recall_cats = np.where(categories_pct >= categories_recall_pct-eps)[0][0] + 1
+
+    recall_categories = categories_pct.index[:n_recall_cats]
     selected_categories = recall_categories[:min(max_n_categories, len(recall_categories))]
-    category_mapping = {c: 'otras' for c in categories_series.unique() if not c in selected_categories}
+    category_mapping = {c: 'Otras' for c in categories_series.unique() if not c in selected_categories}
 
     if keep_nan and np.NaN in categories_pct.index:
         try:
@@ -380,6 +464,11 @@ def trim_categories(categories_series, max_n_categories, categories_recall_pct, 
             category_mapping[np.NaN] = 'NaN'
         except:
             pass
+
+    return category_mapping
+
+def trim_categories(categories_series, max_n_categories, categories_recall_pct, keep_nan):
+    category_mapping = get_category_mapping(categories_series, max_n_categories, categories_recall_pct, keep_nan)
     return categories_series.replace(category_mapping)
 
 def get_group_statistics(data, feature_col, target, lower_q, upper_q):
@@ -399,8 +488,70 @@ def get_group_statistics(data, feature_col, target, lower_q, upper_q):
 
     return group_quantiles
 
-def plot_confidence_bars():
-    pass
+def get_target_proportion(data, feature_col, target, alpha, target_class):
+    confidence_factor = -norm.ppf(alpha/2)
+    proportions = (data.groupby(feature_col)
+        [target]
+        .agg(target_class_size=lambda y: (y == target_class).sum(),
+             bin_size=lambda y: len(y)
+        )
+    )
+    proportions['proportion'] = proportions.eval('target_class_size / bin_size')
+    proportions['variance'] = proportions.eval('proportion*(1-proportion)')
+    lower_eq = 'proportion - @confidence_factor * sqrt(variance/bin_size)'
+    upper_eq = 'proportion + @confidence_factor * sqrt(variance/bin_size)'
+    proportions['lower'] = np.maximum(proportions.eval(lower_eq), 0)
+    proportions['upper'] = np.minimum(proportions.eval(upper_eq), 1)
+    prop_cols = ['lower', 'upper', 'proportion']
+    proportions.loc[:, prop_cols] =  100 * proportions[prop_cols]
+
+    return proportions 
+def plot_confidence_bars(
+    data, 
+    lower_col, 
+    upper_col, 
+    confidence_bar_col, 
+    confidence_bar_name='Median',
+    secondary_bar_name='Mean',
+    index_col=None,
+    secondary_bar_col=None,
+    xaxis_title='Feature Bins', 
+    yaxis_title='Target',
+    title=None
+): 
+    if index_col is None:
+        index_col = data.index.name
+        data.reset_index(inplace=True)
+
+    fig = go.Figure()
+    lower_error = data[confidence_bar_col] - data[lower_col]
+    upper_error = data[upper_col] - data[confidence_bar_col]
+
+    fig.add_trace(
+    go.Bar(
+        name=confidence_bar_name,
+        x=data[index_col], y=data[confidence_bar_col],
+        error_y=dict(symmetric=False, type='data', array=upper_error, arrayminus=lower_error),
+        marker_color=red,
+    ))
+
+    if secondary_bar_col:
+        fig.add_trace(
+        go.Bar(
+            name=secondary_bar_name,
+            x=data[index_col], y=data[secondary_bar_col],
+            marker_color=blue,
+        ))
+    fig.update_layout(
+        yaxis=dict(title=yaxis_title, showgrid=False),
+        xaxis=dict(title=xaxis_title, showgrid=False),
+        title=title,
+        hovermode="x",
+        paper_bgcolor='white',
+        plot_bgcolor='white',
+        hoverlabel_align = 'right',
+    )
+    return fig
 
 def plot_confidence_lines(
     data, 
