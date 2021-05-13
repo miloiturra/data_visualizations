@@ -441,7 +441,6 @@ def categorify_feature(feature_series, bins):
     return feature_values['feature_bin'].values
 
 def get_category_mapping(categories_series, max_n_categories, categories_recall_pct, keep_nan):
-    eps = 1e-6
     categories_pct = (
         categories_series
         .value_counts(normalize=True, dropna=False)
@@ -449,7 +448,7 @@ def get_category_mapping(categories_series, max_n_categories, categories_recall_
         .cumsum()
     )
 
-    n_recall_cats = np.where(categories_pct >= categories_recall_pct-eps)[0][0] + 1
+    n_recall_cats = np.where(categories_pct >= categories_recall_pct)[0][0] + 1
 
     recall_categories = categories_pct.index[:n_recall_cats]
     selected_categories = recall_categories[:min(max_n_categories, len(recall_categories))]
