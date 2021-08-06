@@ -8,6 +8,7 @@ from itertools import combinations, product
 import numpy as np
 from statsmodels.distributions.empirical_distribution import ECDF   
 from pandas.api.types import CategoricalDtype
+from copy import copy
 
 red = "#E07182"
 blue = "#4487D3"
@@ -39,6 +40,20 @@ def get_cdf(data_dict, steps):
         cdf = ECDF(values)
         cdf_dict[name] = (x, 100*cdf(x))
     return cdf_dict
+
+def get_inv_cdf(data_dict, quantiles):
+    if isinstance(quantiles, list):
+        quantiles_array = np.array(quantiles)
+    else:
+        quantiles_array = quantiles
+
+    inv_cdf_dict = {}
+    for name, values in data_dict.items():
+        values = values[~np.isnan(values)]
+        inv_cdf = np.quantile(values, quantiles_array)
+        inv_cdf_dict[name] = (100*quantiles_array, inv_cdf)
+
+    return inv_cdf_dict
 
 def get_lower_upper(data_dict, q_tuple=None):
     x = np.concatenate(list(data_dict.values()))
@@ -75,29 +90,36 @@ def plot_histograms(
     yaxis_title=None, 
     height=None, 
     width=None,
+    plot_hist=True,
     plot_cdf=False,
+    plot_inv_cdf=False,
     nbins=100,
     steps_cdf=100,
+    quantiles=np.linspace(0, 1, 101),
     opacity=0.5):
 
-    cols_plot = 2 if plot_cdf else 1
+    cols_plot = int(plot_hist) + int(plot_cdf) + int(plot_inv_cdf)
     fig = make_subplots(rows=1, cols=cols_plot)
     if plot_cdf:
         cdf_dict =  get_cdf(data_dict, steps=steps_cdf)
-
+    if plot_inv_cdf:
+        inv_cdf_dict = get_inv_cdf(data_dict, quantiles=quantiles)
     iter_count = 0
     for name, data in data_dict.items():
+        subplot_count = 1
         color = color_cycle[iter_count%len(color_cycle)]
+        if plot_hist:
+            hist = go.Histogram(
+                x=data, histnorm='percent', 
+                name=name, 
+                opacity=opacity, 
+                legendgroup=name,
+                marker_color=color,
+                hovertemplate="%{y:,.2f}",
+            )
 
-        hist = go.Histogram(
-            x=data, histnorm='percent', 
-            name=name, 
-            opacity=opacity, 
-            legendgroup=name,
-            marker_color=color,
-            hovertemplate="%{y:,.2f}",
-        )
-        fig.add_trace(hist, row=1, col=1)
+            fig.add_trace(hist, row=1, col=subplot_count)
+            subplot_count += 1
         if plot_cdf:
             x, y = cdf_dict[name]
             lines = go.Scatter(
@@ -110,7 +132,22 @@ def plot_histograms(
                 mode='lines',
                 hovertemplate="%{y:,.2f}",
                 )
-            fig.add_trace(lines, row=1, col=2)
+            fig.add_trace(lines, row=1, col=subplot_count)
+            subplot_count += 1
+        if plot_inv_cdf:
+            x, y = inv_cdf_dict[name]
+            lines = go.Scatter(
+                x=x, y=y, 
+                name=name, 
+                opacity=opacity, 
+                legendgroup=name, 
+                showlegend=False,
+                marker_color=color,
+                mode='lines',
+                hovertemplate="%{y:,.2f}",
+                )
+            fig.add_trace(lines, row=1, col=subplot_count)
+            subplot_count += 1
         iter_count += 1
 
     fig.update_layout(
@@ -124,10 +161,10 @@ def plot_histograms(
         hoverlabel_align='right',
         barmode='overlay',  
     )
-    xbins_size = get_xbins_size(data_dict, nbins)
-    fig.update_traces(xbins_size=xbins_size, row=1, col=1)
+    if plot_hist:
+        xbins_size = get_xbins_size(data_dict, nbins)
+        fig.update_traces(xbins_size=xbins_size, row=1, col=1)
 
-    fig.show()
     return fig
 
 def value_counts_array(x_array):
@@ -242,16 +279,16 @@ def plot_discrete_histogram(
         plot_bgcolor='white',
         hoverlabel_align='right',
     )
-    fig.show()
+    return fig
 
 def compare_numerical_features(
     data, 
     features, 
     nbins, 
     groupby=None, 
-    plot_cdf=True, 
     queries_dict=None,
     sample_pct=1,
+    **kwargs
 ):
 
     if groupby is not None:
@@ -275,9 +312,10 @@ def compare_numerical_features(
         .sort_values(ascending=False)
     )
 
+    fig_dict = {}
     for feature, dist in dists.iteritems():
         data_dict = {name: data[feature].values for name, data in groupby_data.items()}
-        fig = plot_histograms(
+        fig_dict[feature] = plot_histograms(
             data_dict, 
             title=feature+f", distance = {round(dist, 4)} ", 
             xaxis_title=feature, 
@@ -286,9 +324,10 @@ def compare_numerical_features(
             width=None,
             nbins=nbins,
             opacity=0.5,
-            plot_cdf=True
+            **kwargs
         )
-    return dists.to_frame()
+        
+    return fig_dict, dists.to_frame()
 
 def compare_categorical_features(
     data, 
@@ -328,12 +367,13 @@ def compare_categorical_features(
         .sort_values(ascending=False)
     )
 
+    fig_dict = {}
     for feature, dist in dists.iteritems():
         data_dict = {
             name: data[feature].replace(category_trim_mapping[feature])
             for name, data in groupby_data.items()
         }
-        fig = plot_discrete_histogram(
+        fig_dict[feature] = plot_discrete_histogram(
             data_dict, 
             title=feature+f", distance = {round(dist, 4)} ", 
             xaxis_title=feature, 
@@ -341,7 +381,7 @@ def compare_categorical_features(
             height=None, 
             width=None,
         )
-    return dists.to_frame()
+    return fig_dict, dists.to_frame()
 
 def marginal_dependency_plot(
     data, 
@@ -359,6 +399,7 @@ def marginal_dependency_plot(
     keep_nan=True,
     xaxis_title=None,
     yaxis_title=None,
+    show_global_metric=True,
     **kwargs
 ):
     nan_target_constrain = ~data[target].isna()
@@ -387,6 +428,9 @@ def marginal_dependency_plot(
         secondary_middle_col = 'mean'
         lower_name = f"Quantile {100*lower_q}%"
         upper_name = f"Quantile {100*upper_q}%"
+        if show_global_metric:
+            mean_target, median_target = data[target].mean(), data[target].median()
+
     else:
         group_statistics = get_target_proportion(
             sample_data, feature_col, 
@@ -401,6 +445,9 @@ def marginal_dependency_plot(
         lower_name = f"Lower confidence alpha = {categorical_target_alpha}"
         upper_name = f"Upper confidence alpha = {categorical_target_alpha}"
         secondary_middle_col = None
+        if show_global_metric:
+            global_prop = (data[target] == categorical_target_class).mean()
+
     
     if categorical_feature is False:
         group_statistics.index = group_statistics.index.astype(str)
@@ -420,7 +467,15 @@ def marginal_dependency_plot(
             yaxis_title=yaxis_title,
             **kwargs
         )
+        if show_global_metric:
+            if categorical_target_class is not None:
+                fig.add_hline(y=100*global_prop, line_width=2, line_dash="dash", line_color="black", opacity=0.4)
+            else:
+                fig.add_hline(y=mean_target, line_width=2, line_color=blue, opacity=0.4)
+                fig.add_hline(y=median_target, line_width=2, line_color=red, opacity=0.4)
+
     else:
+        central_name = 'Proportion' if categorical_target_class is not None else 'Median'
         fig = plot_confidence_lines(
             group_statistics,
             lower_col=lower_col, 
@@ -431,8 +486,16 @@ def marginal_dependency_plot(
             upper_name=upper_name,
             xaxis_title=xaxis_title,
             yaxis_title=yaxis_title,
+            central_name=central_name,
             **kwargs
         )
+        if show_global_metric:
+            if categorical_target_class is not None:
+                fig.add_hline(y=100*global_prop, line_width=2, line_color=red, opacity=0.4)
+            else:
+                fig.add_hline(y=mean_target, line_width=2, line_dash="dash", line_color="black", opacity=0.4)
+                fig.add_hline(y=median_target, line_width=2, line_color=red, opacity=0.4)
+
     return fig
 
 def categorify_feature(feature_series, bins):
@@ -447,8 +510,9 @@ def get_category_mapping(categories_series, max_n_categories, categories_recall_
         .sort_values(ascending=False)
         .cumsum()
     )
-
-    n_recall_cats = np.where(categories_pct >= categories_recall_pct)[0][0] + 1
+  
+    eps = 10e-6
+    n_recall_cats = np.where(categories_pct >= categories_recall_pct-eps)[0][0] + 1
 
     recall_categories = categories_pct.index[:n_recall_cats]
     selected_categories = recall_categories[:min(max_n_categories, len(recall_categories))]
