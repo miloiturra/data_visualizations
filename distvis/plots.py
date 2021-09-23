@@ -64,9 +64,12 @@ def get_lower_upper(data_dict, q_tuple=None):
         lower, upper = x.min(), x.max()
     return lower, upper 
 
-def calc_wasserstein(data_dict, normalize=True, q_tuple=None):
+def calc_wasserstein(data_dict, normalize=True, q_tuple=None, lower_upper_tuple=None):
     if normalize is True:
-        lower, upper = get_lower_upper(data_dict, q_tuple)
+        if lower_upper_tuple is None:
+            lower, upper = get_lower_upper(data_dict, q_tuple)
+        else:
+            lower, upper = lower_upper_tuple
     names_list = list(data_dict.keys())
     names_combs = combinations(names_list, 2)
     distance_df = pd.DataFrame(names_combs, columns=['data1', 'data2'])
