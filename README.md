@@ -6,3 +6,7 @@ Medium post: https://medium.com/spikelab/distribution-visualizations-for-data-sc
 - More complex examples with the strokes dataset: https://github.com/miloiturra/data_visualizations/blob/main/notebooks/strokes_examples.ipynb
 
 
+# Installation
+
+```> pip install distvis```
+
