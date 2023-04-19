@@ -96,12 +96,13 @@ def plot_histograms(
     plot_hist=True,
     plot_cdf=False,
     plot_inv_cdf=False,
+    plot_box = False,
     nbins=100,
     steps_cdf=100,
     quantiles=np.linspace(0, 1, 101),
     opacity=0.5):
 
-    cols_plot = int(plot_hist) + int(plot_cdf) + int(plot_inv_cdf)
+    cols_plot = int(plot_hist) + int(plot_cdf) + int(plot_inv_cdf) + int(plot_box)
     fig = make_subplots(rows=1, cols=cols_plot)
     if plot_cdf:
         cdf_dict =  get_cdf(data_dict, steps=steps_cdf)
@@ -151,6 +152,18 @@ def plot_histograms(
                 )
             fig.add_trace(lines, row=1, col=subplot_count)
             subplot_count += 1
+        if plot_box:
+            boxplot = go.Box(
+                y=data, 
+                name=name, 
+                opacity=opacity, 
+                legendgroup=name, 
+                showlegend=False,
+                marker_color=color,
+                hovertemplate="%{y:,.2f}",
+                )
+            fig.add_trace(boxplot, row=1, col=subplot_count)
+            subplot_count += 1
         iter_count += 1
 
     fig.update_layout(
@@ -159,10 +172,10 @@ def plot_histograms(
         height=height, width=width,
         title=title,
         hovermode="x",
-        paper_bgcolor='white',
-        plot_bgcolor='white',
         hoverlabel_align='right',
         barmode='overlay',  
+        paper_bgcolor='white',
+        plot_bgcolor='white',
     )
     if plot_hist:
         xbins_size = get_xbins_size(data_dict, nbins)
@@ -278,9 +291,9 @@ def plot_discrete_histogram(
         height=height, width=width,
         title=title,
         hovermode="x",
+        hoverlabel_align='right',
         paper_bgcolor='white',
         plot_bgcolor='white',
-        hoverlabel_align='right',
     )
     return fig
 
@@ -316,7 +329,7 @@ def compare_numerical_features(
     )
 
     fig_dict = {}
-    for feature, dist in dists.iteritems():
+    for feature, dist in dists.items():
         data_dict = {name: data[feature].values for name, data in groupby_data.items()}
         fig_dict[feature] = plot_histograms(
             data_dict, 
@@ -369,13 +382,13 @@ def compare_categorical_features(
         .mean()
         .sort_values(ascending=False)
     )
-
     fig_dict = {}
-    for feature, dist in dists.iteritems():
+    for feature, dist in dists.items():
         data_dict = {
             name: data[feature].replace(category_trim_mapping[feature])
             for name, data in groupby_data.items()
         }
+        data_dict = {k:v.values for k,v in data_dict.items()}
         fig_dict[feature] = plot_discrete_histogram(
             data_dict, 
             title=feature+f", distance = {round(dist, 4)} ", 
@@ -695,9 +708,9 @@ def plot_confidence_lines(
         xaxis=dict(title=xaxis_title, showgrid=False),
         title=title,
         hovermode="x",
+        hoverlabel_align = 'right',
         paper_bgcolor='white',
         plot_bgcolor='white',
-        hoverlabel_align = 'right',
     )
     
     return fig
