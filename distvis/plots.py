@@ -3,17 +3,15 @@ from plotly.subplots import make_subplots
 import pandas as pd 
 import numpy as np
 
-from data_utils import get_xbins_size
-from distribution_utils import (
+from .data_utils import get_xbins_size
+from .distribution_utils import (
     get_cdf, get_inv_cdf, 
     calc_wasserstein, 
     value_counts_dict, 
     calc_total_variation, 
-    get_group_statistics, 
-    get_target_proportion
 )
-from categorical_utils import sort_categories, categorify_feature, trim_categories, get_category_mapping
-from aggregation_utils import get_agg_effects
+from .categorical_utils import sort_categories, get_category_mapping
+from .aggregation_utils import get_agg_effects
 
 from typing import Dict, Tuple, Optional, List, Union, Literal, Any
 

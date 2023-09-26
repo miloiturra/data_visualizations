@@ -4,8 +4,8 @@ import numpy as np
 from statsmodels.distributions.empirical_distribution import ECDF
 from scipy.stats import wasserstein_distance as wasser_dist
 from scipy.stats import norm
-from data_utils import dropnan, get_lower_upper, lower_upper_scale
-from data_utils import fill_missing_comb
+from .data_utils import dropnan, get_lower_upper, lower_upper_scale
+from .data_utils import fill_missing_comb
 
 from typing import List, Tuple, Dict, Optional, Union 
 

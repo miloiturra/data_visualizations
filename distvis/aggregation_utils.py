@@ -3,8 +3,8 @@ from typing import Union, List, Dict, Optional, Callable
 from functools import partial
 import numpy as np
 from scipy.stats import norm as normal_dist
-from special_types import AggFunction
-from categorical_utils import categorify_feature, trim_categories
+from .special_types import AggFunction
+from .categorical_utils import categorify_feature, trim_categories
 
 def get_cum_pct(data: pd.Series):
     return (
