@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "distvis"
-version = "0.2.1"
+version = "0.2.2"
 description = "Distribution of data visualizations for insights, feature engineering and debugging"
 authors = ["milo.iturra <iturra.camilo@gmail.com>"]
 
