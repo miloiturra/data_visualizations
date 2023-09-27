@@ -1,4 +1,5 @@
 import plotly.graph_objects as go
+import plotly.express as px
 from plotly.subplots import make_subplots
 import pandas as pd 
 import numpy as np
@@ -10,7 +11,7 @@ from .distribution_utils import (
     value_counts_dict, 
     calc_total_variation, 
 )
-from .categorical_utils import sort_categories, get_category_mapping
+from .categorical_utils import sort_categories, get_category_mapping, trim_categories
 from .aggregation_utils import get_agg_effects
 
 from typing import Dict, Tuple, Optional, List, Union, Literal, Any
@@ -31,7 +32,6 @@ def plot_histograms(
     data_dict: Dict[str, np.ndarray],
     title: Optional[str]=None, 
     xaxis_title: Optional[str]=None, 
-    yaxis_title: Optional[str]=None, 
     height: Optional[float]=None, 
     width: Optional[float]=None,
     plot_hist: bool=True,
@@ -45,6 +45,9 @@ def plot_histograms(
     color_cycle: Optional[List[str]]=COLOR_CYCLE,
     showgrid: bool=True,
 ) -> go.Figure:
+
+    if color_cycle is None:
+        color_cycle = px.colors.qualitative.Set1
 
     plot_cols = int(plot_hist) + int(plot_cdf) + int(plot_inv_cdf) + int(plot_box)
     fig = make_subplots(rows=1, cols=plot_cols)
@@ -67,6 +70,8 @@ def plot_histograms(
             )
 
             fig.add_trace(hist, row=1, col=subplot_count)
+            fig.update_xaxes(title_text=xaxis_title, row=1, col=subplot_count)
+            fig.update_yaxes(title_text="% of data [%]", row=1, col=subplot_count)
             subplot_count += 1
         if plot_cdf:
             x, y = cdf_dict[name]
@@ -81,6 +86,8 @@ def plot_histograms(
                 hovertemplate="%{y:,.2f}",
             )
             fig.add_trace(lines, row=1, col=subplot_count)
+            fig.update_xaxes(title_text=xaxis_title, row=1, col=subplot_count)
+            fig.update_yaxes(title_text="Cummulative % of data [%]", row=1, col=subplot_count)
             subplot_count += 1
         if plot_inv_cdf:
             x, y = inv_cdf_dict[name]
@@ -95,6 +102,8 @@ def plot_histograms(
                 hovertemplate="%{y:,.2f}",
             )
             fig.add_trace(lines, row=1, col=subplot_count)
+            fig.update_xaxes(title_text='Quantile [%]', row=1, col=subplot_count)
+            fig.update_yaxes(title_text=xaxis_title, row=1, col=subplot_count)
             subplot_count += 1
         if plot_box:
             boxplot = go.Box(
@@ -107,12 +116,13 @@ def plot_histograms(
                 hovertemplate="%{y:,.2f}",
             )
             fig.add_trace(boxplot, row=1, col=subplot_count)
+            fig.update_yaxes(title_text=xaxis_title, row=1, col=subplot_count)
             subplot_count += 1
         iter_count += 1
 
     fig.update_layout(
-        yaxis=dict(title=yaxis_title, showgrid=showgrid),
-        xaxis=dict(title=xaxis_title, showgrid=showgrid),
+        yaxis=dict(showgrid=showgrid),
+        xaxis=dict(showgrid=showgrid),
         height=height, width=width,
         title=title,
         barmode='overlay',  
@@ -129,12 +139,13 @@ def plot_discrete_histogram(
     sort_categories_by: Literal['mean_weight']='mean_weight',
     title: Optional[str]=None, 
     xaxis_title: Optional[str]=None, 
-    yaxis_title: Optional[str]=None, 
     height: Optional[float]=None, 
     width: Optional[float]=None,
     color_cycle: Optional[List[str]]=COLOR_CYCLE,
     showgrid: bool=True,
 ) -> go.Figure:
+    if color_cycle is None:
+        color_cycle = px.colors.qualitative.Set1
 
     value_counts_df = value_counts_dict(data_dict)
     names = value_counts_df["name"].unique()
@@ -159,8 +170,8 @@ def plot_discrete_histogram(
 
     fig.update_layout(
         barmode='group',
-        yaxis=dict(title=yaxis_title, showgrid=showgrid),
         xaxis=dict(title=xaxis_title, showgrid=showgrid),
+        yaxis=dict(title='% of data [%]', showgrid=showgrid),
         height=height, width=width,
         title=title,
         plot_bgcolor='white' if not showgrid else None,
@@ -170,7 +181,6 @@ def plot_discrete_histogram(
 def compare_numerical_features(
     data_dict: Dict[str, pd.DataFrame],
     features: List[str], 
-    nbins: int, 
     sample_pct:float=1,
     **plot_histograms_kwargs
 ) -> Tuple[Dict[str, go.Figure], pd.DataFrame]:
@@ -197,10 +207,8 @@ def compare_numerical_features(
         feature_data_dict = {name: data[feature].values for name, data in sample_data_dict.items()}
         fig_dict[feature] = plot_histograms(
             feature_data_dict,
-            title=feature+f", distance = {round(dist, 4)} ", 
+            title=feature+f", Wassersetin Distance = {round(dist, 4)} ", 
             xaxis_title=feature, 
-            yaxis_title="% of data", 
-            nbins=nbins,
             **plot_histograms_kwargs
         )
         
@@ -250,7 +258,6 @@ def compare_categorical_features(
             feature_data_dict, 
             title=feature+f", distance = {round(dist, 4)} ", 
             xaxis_title=feature, 
-            yaxis_title="% of data", 
             **plot_discrete_histogram_kwargs
         )
     return fig_dict, dists.to_frame()
@@ -262,6 +269,9 @@ def marginal_dependency_plot(
     target: str,
     categorical_target_class: Optional[Any] = None,
     confidence_alpha: float = 0.2,
+    max_n_categories: Optional[int]=None,
+    categories_recall_pct: float=1,
+    keep_nan: bool=True,
     bins: Union[int, List[float]]=10,
     quantiles: Tuple[float, float] = (0.1, 0.9),
     sample_frac: float = 1,
@@ -273,9 +283,17 @@ def marginal_dependency_plot(
     confidence_interval_type: Literal['quantile', 'gaussian'] = 'quantile',
     title: Optional[str] = None,
 ):
-
     agg_effect = get_agg_effects(
-        data=data,
+        data=(
+            data.assign(**{
+                feature: lambda df: trim_categories(
+                    df[feature], 
+                    max_n_categories=max_n_categories, 
+                    categories_recall_pct=categories_recall_pct, 
+                    keep_nan=keep_nan
+                )
+            }) if categorical_feature else data
+        ),
         features=[feature],
         target=target,
         categorical_features=[feature] if categorical_feature else None,
@@ -311,14 +329,14 @@ def marginal_dependency_plot(
         upper_name=upper_name,
         dashed_name=None if categorical_target_class else 'Mean',
     )
-    
+
     if show_histogram:
         bar_plot = go.Bar(
             x=agg_effect.index.astype(str), 
             y=agg_effect.pct_rows, 
             text=agg_effect.n_rows,
             marker_color=red,
-            name='% of data'
+            name='% of data [%]'
         )
         bar_fig = go.Figure(bar_plot)
         bar_fig.update_layout(
@@ -335,7 +353,7 @@ def marginal_dependency_plot(
         fig.update_layout(
             xaxis_showticklabels=True, xaxis2_showticklabels=False,
             yaxis2=dict(autorange='reversed', tickformat='.0%'),
-            yaxis2_title='% of data',
+            yaxis2_title='% of data [%]',
         )
     else: 
         fig = effect_fig
